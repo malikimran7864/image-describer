@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AnalysisResult } from "../types";
+import { AnalysisResult, Shot } from "../types";
 
 const SYSTEM_INSTRUCTION = `You are an expert AI Video Director and Prompt Engineer specializing in image-to-video workflows (Runway, Luma, Midjourney).
 
@@ -100,7 +100,7 @@ export async function analyzeImage(base64Image: string): Promise<AnalysisResult>
 
 export async function generateStoryboard(result: AnalysisResult): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const shotDescriptions = result.shotList.map(s => `Shot ${s.id}: ${s.description}`).join('; ');
+  const shotDescriptions = result.shotList.map(s => `Shot ${s.id}: ${s.description} with camera motion: ${s.motionPrompt}`).join('; ');
   const prompt = `A professional 3x3 cinematic storyboard grid. There are 9 distinct panels arranged in a 3x3 layout. Each panel illustrates a scene from this cinematic sequence: ${shotDescriptions}. Style: Highly realistic cinematic rendering, maintaining consistent lighting: ${result.visualAnchor.lighting}. Mood: ${result.narrativeArc.mood.join(', ')}. The storyboard shows technical camera angles. No text inside panels. Dark background.`;
 
   const response = await ai.models.generateContent({
@@ -119,4 +119,36 @@ export async function generateStoryboard(result: AnalysisResult): Promise<string
     }
   }
   throw new Error("Failed to generate storyboard image");
+}
+
+export async function getMotionVariation(shot: Shot, visualAnchor: string): Promise<{ motionPrompt: string; description: string }> {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const prompt = `Based on this visual anchor: "${visualAnchor}", and this current shot description: "${shot.description}", provide a new, different camera motion and update the description to reflect it.
+  
+  Current Motion: "${shot.motionPrompt}"
+  
+  Requirements:
+  1. Keep the subject the same.
+  2. Change the camera angle, speed, or zoom level significantly (e.g., if it was a zoom, make it a dolly pan).
+  3. Return a JSON object with "motionPrompt" and "description".`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          motionPrompt: { type: Type.STRING },
+          description: { type: Type.STRING },
+        },
+        required: ["motionPrompt", "description"]
+      }
+    }
+  });
+
+  const text = response.text;
+  if (!text) throw new Error("Variation failed");
+  return JSON.parse(text);
 }

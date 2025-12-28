@@ -1,11 +1,11 @@
 
 import React, { useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { analyzeImage, generateStoryboard } from './services/gemini';
-import { AppState, Shot } from './types';
+import { analyzeImage, generateStoryboard, getMotionVariation } from './services/gemini';
+import { AppState, Shot, AnalysisResult } from './types';
 import { 
   Upload, Film, Camera, Move, Music, Info, AlertCircle, 
-  Loader2, Copy, Grid, CheckCircle2, Zap, Download 
+  Loader2, Copy, Grid, CheckCircle2, Zap, Download, RefreshCw
 } from 'lucide-react';
 
 const App = () => {
@@ -17,6 +17,8 @@ const App = () => {
     isGeneratingStoryboard: false,
     error: null,
   });
+
+  const [varyingShotId, setVaryingShotId] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,6 +63,33 @@ const App = () => {
     } catch (err: any) {
       setState(prev => ({ ...prev, isGeneratingStoryboard: false }));
       console.error("Storyboard generation failed", err);
+    }
+  };
+
+  const handleVariation = async (shot: Shot) => {
+    if (!state.result) return;
+    setVaryingShotId(shot.id);
+    try {
+      // Keep the main subject, rewrite motion prompt
+      const variation = await getMotionVariation(shot, state.result.visualAnchor.subject);
+      
+      const newShotList = state.result.shotList.map(s => 
+        s.id === shot.id ? { ...s, motionPrompt: variation.motionPrompt, description: variation.description } : s
+      );
+
+      const updatedResult: AnalysisResult = {
+        ...state.result,
+        shotList: newShotList
+      };
+
+      setState(prev => ({ ...prev, result: updatedResult }));
+      setVaryingShotId(null);
+      
+      // Automatically trigger generation again with this new setting
+      generateStoryboardVisual(updatedResult);
+    } catch (err: any) {
+      console.error("Variation error", err);
+      setVaryingShotId(null);
     }
   };
 
@@ -197,11 +226,22 @@ const App = () => {
                 {state.result.shotList.map((shot: Shot) => (
                   <div key={shot.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden flex flex-col group hover:border-zinc-600 transition-colors">
                     <div className="p-4 bg-zinc-950 flex justify-between items-center border-b border-zinc-800">
-                      <span className="font-black text-xs text-red-600 tracking-tighter">SHOT {shot.id}</span>
-                      <span className="text-[10px] text-zinc-500 font-mono uppercase">{shot.type} • {shot.duration}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-xs text-red-600 tracking-tighter">SHOT {shot.id}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono uppercase">{shot.type} • {shot.duration}</span>
+                      </div>
+                      <button 
+                        onClick={() => handleVariation(shot)}
+                        disabled={varyingShotId === shot.id}
+                        className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded font-bold uppercase tracking-tighter flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        title="Try New Motion Variation"
+                      >
+                        {varyingShotId === shot.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                        ♻️ Variation
+                      </button>
                     </div>
                     <div className="p-5 flex-1 space-y-5">
-                      <p className="text-sm text-zinc-300 leading-snug">{shot.description}</p>
+                      <p className="text-sm text-zinc-300 leading-snug min-h-[48px]">{shot.description}</p>
                       
                       <div className="space-y-4">
                         <div className="relative group/prompt">
@@ -235,7 +275,7 @@ const App = () => {
                               <Copy className="w-3.5 h-3.5" />
                             </button>
                           </div>
-                          <div className="bg-zinc-950 p-3 rounded-lg text-[11px] font-mono text-zinc-500 border border-zinc-800">
+                          <div className="bg-zinc-950 p-3 rounded-lg text-[11px] font-mono text-zinc-300 border border-red-900/30 italic">
                             {shot.motionPrompt}
                           </div>
                         </div>
